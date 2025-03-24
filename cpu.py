@@ -138,7 +138,10 @@ def step():
     elif funct3 == Funct3.SLLI:
         regfile[rd] = regfile[rs1] << (imm & 0x1f)
     # elif funct3 == Funct3.SRL:
-
+    elif funct3 == Funct3.ANDI:
+      regfile[rd] = regfile[rs1] & imm
+    elif funct3 == Funct3.SRLI:
+      regfile[rd] = regfile[rs1] >> imm
     else:
       dump()
       raise Exception("%r: Unknown funct3: %r" % (opcode, funct3))
@@ -237,7 +240,11 @@ def step():
         regfile[rd] = regfile[rs1] >> shamt
       else:
         raise Exception("%r: Unknown funct7: %r" % (opcode, funct7))
-      
+    elif funct3 == Funct3.AND:
+      rs2 = gibi(24, 20)
+      rs1 = gibi(19, 15)
+      rd = gibi(11, 7)
+      regfile[rd] = regfile[rs1] & regfile[rs2]
     else:
       raise Exception("%r: Unknown funct3: %r" % (opcode, funct3))
   elif opcode == Ops.LOAD:
