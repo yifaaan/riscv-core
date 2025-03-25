@@ -3,8 +3,10 @@ import glob
 
 from elftools.elf.elffile import ELFFile
 
-regfile = [0]*33
+regnames = ["zero", "ra", "sp", "gp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6", "PC"]
+regfile = [0]*34
 PC = 32
+MTVEC = 33
 
 from enum import Enum
 # RV32I Base Instruction Set
@@ -27,7 +29,7 @@ class Ops(Enum):
   SYSTEM = 0b1110011
 
 class Funct3(Enum):
-  ADD = ADDI = ECALL = EBREAK =0b000
+  ADD = ADDI = 0b000
   SLLI = BNE = 0b001
   SLT = SLTI = 0b010
   SLTU = SLTIU = 0b011
@@ -49,7 +51,15 @@ class Funct3(Enum):
   LW = 0b010
   LBU = 0b100
   LHU = 0b101
-   
+
+
+  ECALL = EBREAK = 0b000
+  CSRRW = 0b001
+  CSRRS = 0b010
+  CSRRC = 0b011
+  CSRRWI = 0b101
+  CSRRSI = 0b110
+  CSRRCI = 0b111
 
 # 64k memory at 0x80000000, little endian
 memory = bytearray(b'\x00' * 0x10000)
@@ -89,16 +99,39 @@ def sign_extend(x, width):
   else:
     return x
 
+def arith(funct3, x, y):
+  if funct3 == Funct3.ADDI:
+    return x + y
+  # elif funct3 == Funct3.SRL:
+  elif funct3 == Funct3.ANDI:
+    return x & y
+  elif funct3 == Funct3.SRLI:
+    return x >> y
+  elif funct3 == Funct3.ORI:
+    return x | y
+  elif funct3 == Funct3.XORI:
+    return x ^ y
+  elif funct3 == Funct3.SLLI:
+    return x << (y & 0x1f)
+  elif funct3 == Funct3.SLTI:
+    return 1 if x < y else 0
+  else:
+    dump()
+    raise Exception("Unknown funct3: %r" % funct3)
 
 
 def step():
   # Instruction Fetch
   ins = r32(regfile[PC])
-
+  if ins == 0xC0001073:
+    print("success")
+    return False
   # Instruct Decode
   def gibi(s, e):
     return (ins >> e) &  ((1 << (s-e + 1)) - 1)
-  
+  if (gibi(6, 0) == 47):
+    regfile[PC] += 4
+    return True
   opcode = Ops(gibi(6, 0))
   print("addr: %x, ins: %08x, opcode: %r, regfile[rs1]: %x" %(regfile[PC], ins, opcode, regfile[gibi(19, 15)]))
 
@@ -131,27 +164,8 @@ def step():
     imm = gibi(31, 20)
     imm = sign_extend(imm, 12)
 
-    print("imm:", imm, "funct3:", funct3, "rs1:", rs1, "rd:", rd)
-    if funct3 == Funct3.ADDI:
-      regfile[rd] = regfile[rs1] + imm
-      print("rd:", hex(regfile[rd]))
-    elif funct3 == Funct3.SLLI:
-        regfile[rd] = regfile[rs1] << (imm & 0x1f)
-    # elif funct3 == Funct3.SRL:
-    elif funct3 == Funct3.ANDI:
-      regfile[rd] = regfile[rs1] & imm
-    elif funct3 == Funct3.SRLI:
-      regfile[rd] = regfile[rs1] >> imm
-    else:
-      dump()
-      raise Exception("%r: Unknown funct3: %r" % (opcode, funct3))
-    # elif funct3 == Funct3.SLLI:
-    #   regfile[rd] = regfile[rs1] << (imm & 0x1f)
-    # elif funct3 == Funct3.SLTI:
-    #   regfile[rd] = 1 if regfile[rs1] < imm else 0
-    # elif funct3 == Funct3.SLTIU:
-    #   regfile[rd] = 1 if regfile[rs1] < imm else 0
-    # else:
+    # print("imm:", imm, "funct3:", funct3, "rs1:", rs1, "rd:", rd)
+    regfile[rd] = arith(funct3, regfile[rs1], imm)
   elif opcode == Ops.AUIPC:
     rd = gibi(11, 7)
     imm = gibi(31, 12)
@@ -166,29 +180,27 @@ def step():
     
 
     funct3 = Funct3(gibi(14, 12))
-    print("opcode:", opcode, "imm:", imm, "funct3:", funct3)
+    # print("opcode:", opcode, "imm:", imm, "funct3:", funct3)
+    cond = False
     if funct3 == Funct3.BEQ:
-      if regfile[rs1] == regfile[rs2]:
-        regfile[PC] += imm
-    elif funct3 == Funct3.BNE or funct3 == Funct3.SLLI:
-      if regfile[rs1] != regfile[rs2]:
-        regfile[PC] += imm
+      cond = regfile[rs1] == regfile[rs2]
+        
+    elif funct3 == Funct3.BNE:
+      print("BNE", regfile[rs1], regfile[rs2], imm, hex(regfile[PC] + imm))
+      cond = regfile[rs1] != regfile[rs2]
     elif funct3 == Funct3.BLT:
-      if regfile[rs1] < regfile[rs2]:
-        regfile[PC] += imm
+      cond = sign_extend(regfile[rs1], 32) < sign_extend(regfile[rs2], 32)
     elif funct3 == Funct3.BLTU:
-      if regfile[rs1] < regfile[rs2]:
-        regfile[PC] += imm
+      cond = regfile[rs1] < regfile[rs2]
     elif funct3 == Funct3.BGE:
-      if regfile[rs1] >= regfile[rs2]:
-        regfile[PC] += imm
+      cond = sign_extend(regfile[rs1], 32) >= sign_extend(regfile[rs2], 32)
     elif funct3 == Funct3.BGEU:
-      if regfile[rs1] >= regfile[rs2]:
-        regfile[PC] += imm
-
+      cond = regfile[rs1] >= regfile[rs2]
     else:
       raise Exception("%r: Unknown funct3: %r" % (opcode, funct3))
-
+    if cond:
+      regfile[PC] += imm
+      return True
   elif opcode == Ops.STORE:
     imm = gibi(31, 25) << 5 | gibi(11, 7)
     rs2 = gibi(24, 20)
@@ -196,57 +208,48 @@ def step():
     funct3 = Funct3(gibi(14, 12))
     print("imm:", imm, "funct3:", funct3, "rs2:", rs2, "rs1:", rs1)
   elif opcode == Ops.SYSTEM:
-    pass
-    # if funct3 == Funct3.ECALL:
-    #   if imm == 0:
-    #       print("ECALL")
-    #   elif imm == 1:
-    #       print("EBREAK")
-    #   else:
-    #       raise Exception("%r: Unknown funct3: %r" % (opcode, funct3))
-    # elif funct3 == Funct3.SLLI:
-    #   imm = gibi(31, 20)
-    #   rs1 = gibi(19, 15)
-    #   funct3 = Funct3(gibi(14, 12))
-    #   rd = gibi(11, 7)
-    #   regfile[rd] = regfile[rs1] << (imm & 0x1f)
-    # elif funct3 == Funct3.SRL:
-    #   funct7 = gibi(31, 25)
-    #   rs2 = gibi(24, 20)
-    #   rs1 = gibi(19, 15)
-    #   funct3 = Funct3(gibi(14, 12))
-    #   rd = gibi(11, 7)
-    #   if funct7 == 0:
-    #     # Shift left logical
-    #     regfile[rd] = regfile[rs1] << (imm & 0x1f)
-    #   elif funct7 == 0x20:
-    #     # Shift right arithmetic
-    # else:
-    #   raise Exception("%r: Unknown funct3: %r" % (opcode, funct3))
+    funct3 = Funct3(gibi(14, 12))
+    csr = gibi(31, 20)
+    rs1 = gibi(19, 15)
+    rd = gibi(11, 7)
+    if funct3 == Funct3.ECALL or funct3 == Funct3.EBREAK:
+      funct12 = gibi(31, 20)
+      if funct12 == 0:
+        print("ECALL")
+      elif funct12 == 1:
+        print("EBREAK")
+      else:
+        pass
+    elif funct3 == Funct3.CSRRW:
+      print("csr:", csr, "rs1:", rs1)
+      # regfile[csr] = regfile[rs1]
+    elif funct3 == Funct3.CSRRS:
+      print("csr:", csr, "rs1:", rs1)
+      # regfile[csr] = regfile[csr] | regfile[rs1]
+    elif funct3 == Funct3.CSRRC:
+      print("csr:", csr, "rs1:", rs1)
+      # regfile[csr] = regfile[csr] & ~regfile[rs1]
+    elif funct3 == Funct3.CSRRWI:
+      print("csr:", csr, "rs1:", rs1)
+      # regfile[csr] = rs1
+    elif funct3 == Funct3.CSRRSI:
+      print("csr:", csr, "rs1:", rs1)
+      # regfile[csr] = regfile[csr] | rs1
+    elif funct3 == Funct3.CSRRCI:
+      print("csr:", csr, "rs1:", rs1)
+      # regfile[csr] = regfile[csr] & ~rs1
+    # if imm == 0: # ECALL
+    #     print("ECALL - Program terminated")
+    #     return False  # 结束程序执行
+    # else: # EBREAK
+    #     print("EBREAK")
   elif opcode == Ops.OP:
     # R-type instruction
-    funct7 = gibi(31, 25)
-    
     funct3 = Funct3(gibi(14, 12))
+    rs2 = gibi(24, 20)
+    rs1 = gibi(19, 15)
     rd = gibi(11, 7)
-    if funct3 == Funct3.ADD:
-      rs2 = gibi(24, 20)
-      rs1 = gibi(19, 15)
-      regfile[rd] = regfile[rs1] + regfile[rs2]
-    elif funct3 == Funct3.SRL:
-      if funct7 == 0:
-        shamt = gibi(24, 20)
-        rs1 = gibi(19, 15)
-        regfile[rd] = regfile[rs1] >> shamt
-      else:
-        raise Exception("%r: Unknown funct7: %r" % (opcode, funct7))
-    elif funct3 == Funct3.AND:
-      rs2 = gibi(24, 20)
-      rs1 = gibi(19, 15)
-      rd = gibi(11, 7)
-      regfile[rd] = regfile[rs1] & regfile[rs2]
-    else:
-      raise Exception("%r: Unknown funct3: %r" % (opcode, funct3))
+    regfile[rd] = arith(funct3, regfile[rs1], regfile[rs2])
   elif opcode == Ops.LOAD:
     imm = gibi(31, 20)
     rs1 = gibi(19, 15)
@@ -264,7 +267,6 @@ def step():
       regfile[rd] = r32(regfile[rs1] + imm) & 0xffff
     elif funct3 == Funct3.LW:
       imm = sign_extend(imm, 12)
-      print(imm, hex(regfile[rs1]))
       regfile[rd] = r32(regfile[rs1] + imm) & 0xffffffff
     else:
       raise Exception("%r: Unknown funct3: %r" % (opcode, funct3))
@@ -272,6 +274,8 @@ def step():
     imm = gibi(31, 12) << 12
     rd = gibi(11, 7)
     regfile[rd] = sign_extend(imm, 32)
+  elif opcode == Ops.MISC:
+    pass
   else:
     dump()
     raise Exception("Unknown opcode: %r" % opcode)
@@ -286,8 +290,8 @@ def step():
   return True
 
 if __name__ == "__main__":
-  print(Funct3.ADD == Funct3.ADDI)
-  for f in glob.glob("./riscv-tests/isa/rv32ui-*"):
+  i = 0
+  for f in glob.glob("./riscv-tests/isa/rv32ui-v-add"):
       if f.endswith(".dump"):
           continue
       print(f)
