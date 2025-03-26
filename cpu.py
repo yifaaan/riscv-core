@@ -3,10 +3,10 @@ import glob
 
 from elftools.elf.elffile import ELFFile
 
-regnames = ["zero", "ra", "sp", "gp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6", "PC"]
-regfile = [0]*34
+regnames = ["zero", "ra", "sp", "gp", "tp","t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6", "PC"]
+regfile = [0]*33
 PC = 32
-MTVEC = 33
+
 
 from enum import Enum
 # RV32I Base Instruction Set
@@ -83,12 +83,12 @@ def r32(addr):
 
 def dump():
   pp = []
-  for i in range(32):
+  for i in range(33):
       if i != 0 and i % 8 == 0:
           pp.append("\n")
-      pp.append("%3s: %08x " % ("x%d" %i, regfile[i]))
-  pp.append("\n")
-  pp.append("PC: %08x" % regfile[PC])
+      pp.append("%3s: %08x " % ("%s" %regnames[i], regfile[i]))
+  # pp.append("\n")
+  # pp.append("PC: %08x" % regfile[PC])
   pp.append("\n")
   print("".join(pp))
 
@@ -115,6 +115,8 @@ def arith(funct3, x, y):
     return x << (y & 0x1f)
   elif funct3 == Funct3.SLTI:
     return 1 if x < y else 0
+  elif funct3 == Funct3.SLTU:
+    return 1 if x < y else 0
   else:
     dump()
     raise Exception("Unknown funct3: %r" % funct3)
@@ -133,7 +135,7 @@ def step():
     regfile[PC] += 4
     return True
   opcode = Ops(gibi(6, 0))
-  print("addr: %x, ins: %08x, opcode: %r, regfile[rs1]: %x" %(regfile[PC], ins, opcode, regfile[gibi(19, 15)]))
+  print("%x:\t%08x, opcode: %r, regfile[rs1]: %x" %(regfile[PC], ins, opcode, regfile[gibi(19, 15)]))
 
   if opcode == Ops.JAL:
     # J-type instruction
@@ -273,7 +275,8 @@ def step():
   elif opcode == Ops.LUI:
     imm = gibi(31, 12) << 12
     rd = gibi(11, 7)
-    regfile[rd] = sign_extend(imm, 32)
+    # regfile[rd] = sign_extend(imm, 32)
+    regfile[rd] = imm
   elif opcode == Ops.MISC:
     pass
   else:
@@ -291,9 +294,11 @@ def step():
 
 if __name__ == "__main__":
   i = 0
-  for f in glob.glob("./riscv-tests/isa/rv32ui-v-add"):
+  for f in glob.glob("./riscv-tests/isa/rv32ui-p-*"):
       if f.endswith(".dump"):
-          continue
+        continue
+      if "fence_i" in f:
+        continue
       print(f)
       with open(f, "rb") as f:
           print("test", f)
@@ -305,4 +310,4 @@ if __name__ == "__main__":
           regfile[PC] = 0x80000000
           while step():
               pass
-      break
+  dump()
